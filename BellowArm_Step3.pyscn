@@ -1,0 +1,138 @@
+
+#	STANDARD IMPORT
+import Sofa
+import math
+import os
+
+#	STLIB IMPORT
+from stlib.scene import Scene
+from stlib.scene import ContactHeader
+from stlib.physics.deformable import ElasticMaterialObject
+from stlib.physics.rigid import Floor
+from fixingbox import FixingBox
+
+# This function includes the whole mechanical model of the silicone piece, as written in the previous step, except that the prefab ElasticMaterialObject is used, instead of creating each component.
+def Bellow(parent):
+    body = parent.createChild("Bellow")
+
+    # Prefab ElasticMaterialObject implementing the whole mechanical model of the silicone piece
+    e = ElasticMaterialObject(body,
+                              volumeMeshFileName="data/mesh/BellowArmAssembly.vtk",
+                              poissonRatio=0.45,
+                              youngModulus=100,
+                              totalMass=0.032,
+                              rotation=[90, 0, 0])
+
+    # Visual model
+    visual = e.createChild("Visual")
+    visual.createObject("MeshSTLLoader",
+                        name="loader",
+                        filename="data/mesh/BellowArmSection.stl",
+                        rotation=[90, 0, 0])
+    visual.createObject("OglModel",
+                        name="renderer",
+                        src="@loader",
+                        color=[1.0, 1.0, 1.0, 0.5])
+    visual.createObject("BarycentricMapping",
+                        input=e.dofs.getLinkPath(),
+                        output=visual.renderer.getLinkPath())
+    return body
+
+def createScene(rootNode):
+  # Setting the gravity, assuming the length unit is in millimeters
+    scene = Scene(rootNode, gravity=[0.0, -9810, 0.0], plugins=["SofaSparseSolver"])
+    #ContactHeader(rootNode, alarmDistance = 5, contactDistance = 1)
+    
+    # Setting the timestep in seconds
+    rootNode.dt = 0.001
+
+    scene.VisualStyle.displayFlags = "showBehavior"
+        
+    Floor(rootNode,
+          translation=[40.0,-100.0,50.0],
+          isAStaticObject=True)
+    # Tool to load the mesh file of the silicone piece. It will be used for both the mechanical and the visual models.
+    #rootNode.createObject("MeshSTLLoader", name="loader2", filename="data/mesh/BellowArmSection.stl")
+    
+    
+    # # Basic mechanical modelling of the silicone piece
+    # elasticbody = rootNode.createChild("MechanicalBody")
+    # elasticbody.createObject("MechanicalObject", name="dofs",
+                             # position=rootNode.loader2.position,
+                             # showObject=True, showObjectScale=5.0,
+                             # rotation=[0.0, 0.0, 0.0])
+    # elasticbody.createObject("UniformMass")
+
+    # elasticbody.createObject("EulerImplicitSolver")
+    # elasticbody.createObject("SparseLDLSolver")
+
+    # # Visual object
+    # visual = rootNode.createChild("Visual")
+    # # The mesh used for the Visual object is the same as the one for the MechanicalObject, and has been introduced in the rootNode
+    # visual.createObject("OglModel", name="renderer",
+                        # src='@../loader2',
+                        # color=[1.0, 0, 0.0, 0.5])
+
+    # # A mapping applies the deformations computed on the mechanical model (the input parameter)
+    # # to the visual model (the output parameter).
+    # elasticbody.createObject("IdentityMapping",
+                             # input=elasticbody.dofs.getLinkPath(),
+                             # output=visual.renderer.getLinkPath())  
+    
+        # To simulate an elastic object, we need:
+    # - a deformation law (here linear elasticity)
+    # - a solving method (here FEM)
+    # - as we are using FEM we need a space discretization (here tetrahedron)
+    elasticbody = rootNode.createChild("ElasticBody")
+
+    # Specific loader for the mechanical model
+    elasticbody.createObject('MeshVTKLoader',
+                             name='loader',
+                             filename="data/mesh/BellowArm.vtk")
+    elasticbody.createObject('TetrahedronSetTopologyContainer',
+                             src='@loader',
+                             name='container')
+    elasticbody.createObject("MechanicalObject",
+                             name="dofs",
+                             position=elasticbody.loader.position,
+                             rotation=[0.0, 0.0, 0.0],
+                             showObject=True,
+                             showObjectScale=5.0)
+    elasticbody.createObject("UniformMass", totalMass=0.032)
+
+    elasticbody.createObject("EulerImplicitSolver")
+    elasticbody.createObject("SparseLDLSolver")
+
+    # ForceField components
+    elasticbody.createObject("TetrahedronFEMForceField",
+                             youngModulus=800,
+                             poissonRatio=0.45)
+    # It is possible to visualize the "forcefields" by doing
+    scene.VisualStyle.displayFlags = "showForceFields"
+
+    # Visual model
+    visual = elasticbody.createChild("Visual")
+
+    # Specific loader for the visual model
+    visual.createObject("MeshSTLLoader",
+                        name="loader",
+                        filename="data/mesh/BellowArm.stl",
+                        rotation=[0, 0, 0])
+    visual.createObject("OglModel",
+                        src="@loader",
+                        name="renderer",
+                        color=[1.0, 1.0, 1.0, 0.5])
+
+    visual.createObject("BarycentricMapping",
+                        input=elasticbody.dofs.getLinkPath(),
+                        output=visual.renderer.getLinkPath())
+    # Instanciating the FixingBox prefab into the graph, constraining the mechanical object of the ElasticBody.
+    # fix = FixingBox(rootNode,
+                    # elasticbody,
+                    # translation=[0.0, 0.0, 0.0],
+                    # scale=[3., 3., 3.])
+
+    # # Changing the property of the Box ROI so that the constraint area appears on screen.
+    # fix.BoxROI.drawBoxes = True
+     
+    return rootNode

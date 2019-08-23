@@ -1,0 +1,101 @@
+
+#	STANDARD IMPORT
+import Sofa
+import math
+import os
+
+#	STLIB IMPORT
+from stlib.scene import Scene
+from stlib.scene import ContactHeader
+from stlib.physics.deformable import ElasticMaterialObject
+from stlib.solver import DefaultSolver
+from stlib.physics.rigid import Floor
+from stlib.physics.rigid import Cube
+from fixingbox import FixingBox
+
+# Parameter Definition
+ElasticModulus = 500
+ElasticPoisson = 0.47
+
+#Load only one bellow - easier for computational complexity
+stlPath = 'data/mesh/SingleBellow.stl'
+vtkPath = 'data/mesh/SingleBellow.vtk'
+
+# Load the entire arm
+#stlPath = 'data/mesh/BellowArm.stl'
+#vtkPath = 'data/mesh/BellowArm.vtk'
+
+
+# This function includes the whole mechanical model of the silicone piece using the ElasticMaterialObject Prefab.
+def Bellow(parent,offset):
+    body = parent.createChild("Bellow")
+
+    # Prefab ElasticMaterialObject implementing the whole mechanical model of the silicone piece
+    e = ElasticMaterialObject(body,
+                              volumeMeshFileName=vtkPath,
+                              poissonRatio=ElasticPoisson,
+                              youngModulus=ElasticModulus,
+                              totalMass=3.2,
+                              translation = offset,
+                              surfaceMeshFileName =stlPath,
+                              scale=[1.0, 1.0, 1.0],
+                              collisionMesh =stlPath)
+                              
+    e.createObject('UncoupledConstraintCorrection')
+    # e.createObject('BoxROI', name='boxROI', box='-10 0 -20 0 30 20')
+    # e.createObject('RestShapeSpringsForceField', points='@boxROI.indices', stiffness='1e12', angularStiffness='1e12')
+    
+    # Cavity Model
+    Cavity = e.createChild("Cavity")
+    Cavity.createObject('EulerImplicitSolver', name='odesolver', rayleighStiffness='0.1', rayleighMass='0.1')
+    Cavity.createObject('SparseLDLSolver', name='directSolver')
+
+    Cavity.createObject('MeshVTKLoader', name='loader', filename= vtkPath, translation = offset)
+    Cavity.createObject('TetrahedronSetTopologyContainer', src='@loader', name='container')
+    Cavity.createObject('TetrahedronSetTopologyModifier')
+    Cavity.createObject('TetrahedronSetTopologyAlgorithms', template='Vec3d')
+    Cavity.createObject('TetrahedronSetGeometryAlgorithms', template='Vec3d')
+
+    Cavity.createObject('MechanicalObject', name='tetras', template='Vec3d', showIndices='false', showIndicesScale='4e-5', rx='0', dz='0')
+    Cavity.createObject('UniformMass', totalMass= 0.04)
+    Cavity.createObject('TetrahedronFEMForceField', template='Vec3d', name='FEM', method='large', poissonRatio=ElasticPoisson,  youngModulus=ElasticModulus, drawAsEdges="1")
+    
+    # Cavity Constraint 
+    cavitypressure = e.createChild('cavitypressure')
+    cavitypressure.createObject('MeshSTLLoader', name='loader', filename=stlPath,translation = offset)
+    cavitypressure.createObject('Mesh', src='@loader', name='topo')
+    cavitypressure.createObject('MechanicalObject', name='cavitypressure')
+    cavitypressure.createObject('SurfacePressureConstraint', name="SurfacePressureConstraint", template='Vec3d', value="0.0001", triangles='@topo.triangles', drawPressure='0', drawScale='0.0002', valueType="pressure")
+    cavitypressure.createObject('BarycentricMapping', name='mapping',  mapForces='false', mapMasses='false')
+    return body
+    
+
+def createScene(rootNode):
+  # Setting the gravity, assuming the length unit is in millimeters
+    scene = Scene(rootNode, gravity=[0.0, -9810, 0.0], plugins=["SofaSparseSolver"])
+    ContactHeader(rootNode, alarmDistance = 50, contactDistance = 2)
+    
+    # Setting the timestep in seconds
+    rootNode.dt = 0.01
+    
+    #Root Node
+    rootNode.createObject('RequiredPlugin', pluginName='SoftRobots')
+    rootNode.createObject('VisualStyle', displayFlags='hideVisualModels hideBehaviorModels showCollisionModels hideBoundingCollisionModels hideForceFields hideInteractionForceFields hideWireframe')
+    rootNode.createObject('FreeMotionAnimationLoop')
+    rootNode.createObject('GenericConstraintSolver',maxIterations="10000",tolerance="1e-3")
+    rootNode.createObject('PythonScriptController', filename="pythonControllers/wholeGripperController.py", classname="controller")
+    rootNode.createObject('DefaultContactManager', name='Response', response='FrictionContact')
+    scene.VisualStyle.displayFlags = "showBehavior"
+        
+    floor= Floor(rootNode,
+          uniformScale=5.0,
+          translation=[40.0,-50.0,50.0],
+          isAStaticObject=True)
+    bellow1 = Bellow(rootNode,[35,0,20])
+    #bellow2 = Bellow(rootNode,[0,0,10])
+    # Instanciating the prefab into the graph
+    cube= Cube(rootNode,
+             translation=[40,-10,50],
+             color=[10.0,0,0,0.9],
+             uniformScale=20.0)     
+    return rootNode
